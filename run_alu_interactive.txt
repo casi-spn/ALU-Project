@@ -1,0 +1,120 @@
+# Interactive ALU Simulator
+# This script allows you to choose numbers and operations during ModelSim simulation
+
+# quit current simulation if any
+quit -sim
+
+# empty the work library if present
+if [file exists "work"] {vdel -all}
+# create a new work library
+vlib work
+
+# Compile files
+set sourcefiles {full_adder.v adder_8bit.v subtractor_8bit.v alu.v tb_alu.v}
+if [catch "eval vlog $sourcefiles"] {
+    puts "correct the compilation errors"
+    return
+}
+
+# Start simulation
+vsim -voptargs=+acc tb_alu
+
+# Add waves for visualization
+add wave *
+
+# Interactive input loop
+puts "\n========== ALU Interactive Simulator =========="
+puts "Operations: 0=ADD, 1=SUBTRACT"
+set continue_sim 1
+
+while {$continue_sim} {
+    puts "\n--- New Test ---"
+
+    # Get operation choice
+    set valid_op 0
+    while {!$valid_op} {
+        if {[catch {
+            puts -nonewline "Select operation (0=ADD, 1=SUBTRACT): "
+            flush stdout
+            gets stdin op_choice
+            if {$op_choice == "0" || $op_choice == "1"} {
+                set valid_op 1
+            } else {
+                puts "Invalid! Please enter 0 or 1"
+            }
+        } err]} {
+            puts "Error reading input"
+        }
+    }
+
+    set op_name [expr {$op_choice == 0 ? "ADD" : "SUBTRACT"}]
+    puts "Operation: $op_name"
+
+    # Get first number (signed: -128 to 127)
+    set valid_input 0
+    while {!$valid_input} {
+        if {[catch {
+            puts -nonewline "Enter A (-128 to 127): "
+            flush stdout
+            gets stdin num_a
+            if {$num_a >= -128 && $num_a <= 127} {
+                set valid_input 1
+            } else {
+                puts "Invalid! Please enter a number between -128 and 127"
+            }
+        } err]} {
+            puts "Error reading input"
+        }
+    }
+
+    # Get second number (signed: -128 to 127)
+    set valid_input 0
+    while {!$valid_input} {
+        if {[catch {
+            puts -nonewline "Enter B (-128 to 127): "
+            flush stdout
+            gets stdin num_b
+            if {$num_b >= -128 && $num_b <= 127} {
+                set valid_input 1
+            } else {
+                puts "Invalid! Please enter a number between -128 and 127"
+            }
+        } err]} {
+            puts "Error reading input"
+        }
+    }
+
+    # Convert signed to unsigned (two's complement)
+    set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
+    set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
+
+    # Force the values into the simulation (convert to hex format for ModelSim)
+    puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
+    set hex_a [format "%02X" $unsigned_a]
+    set hex_b [format "%02X" $unsigned_b]
+
+    force tb_alu/A 8'h$hex_a
+    force tb_alu/B 8'h$hex_b
+    force tb_alu/operation $op_choice
+
+    # Run simulation for a short time to see results
+    run 20ns
+
+    # Display results with flags
+    puts "\n========== Results =========="
+    puts "Z (Zero):    [examine -value tb_alu/Z]"
+    puts "N (Negative): [examine -value tb_alu/N]"
+    puts "V (Overflow): [examine -value tb_alu/V]"
+    puts "=========================="
+
+    # Ask if user wants to continue
+    set continue_sim 0
+    puts -nonewline "\nRun another test? (y/n): "
+    flush stdout
+    gets stdin response
+    if {[string tolower $response] eq "y"} {
+        set continue_sim 1
+    }
+}
+
+puts "\nSimulation ended. You can still inspect waveforms in the Wave window."
