@@ -1,0 +1,29 @@
+module tb_or;
+
+reg [7:0] A;
+reg [7:0] B;
+
+wire [7:0] result;
+
+or_8bit uut(A, B, result);
+
+initial begin
+
+    $monitor("A=%b B=%b result=%b", A, B, result);
+
+    A = 8'b10101010;
+    B = 8'b11001100;
+    #10;
+
+    A = 8'b11111111;
+    B = 8'b00001111;
+    #10;
+
+    A = 8'b00000000;
+    B = 8'b11111111;
+    #10;
+
+    $stop;
+end
+
+endmodule
