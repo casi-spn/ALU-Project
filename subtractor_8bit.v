@@ -21,6 +21,6 @@ full_adder FA5(A[5], B_comp[5], carry[5], diff[5], carry[6]);
 full_adder FA6(A[6], B_comp[6], carry[6], diff[6], carry[7]);
 full_adder FA7(A[7], B_comp[7], carry[7], diff[7], carry[8]);
 
-assign cout = carry[8];
+assign cout = carry[8];//final carry
 
 endmodule
