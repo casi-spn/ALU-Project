@@ -10,7 +10,7 @@ if [file exists "work"] {vdel -all}
 vlib work
 
 # Compile files
-set sourcefiles {full_adder.v adder_8bit.v subtractor_8bit.v alu.v tb_alu.v}
+set sourcefiles {full_adder.v adder_8bit.v subtractor_8bit.v divider_8bit.v alu.v tb_alu.v}
 if [catch "eval vlog $sourcefiles"] {
     puts "correct the compilation errors"
     return
@@ -24,7 +24,7 @@ add wave *
 
 # Interactive input loop
 puts "\n========== ALU Interactive Simulator =========="
-puts "Operations: 0=ADD, 1=SUBTRACT"
+puts "Operations: 0=ADD, 1=SUBTRACT, 3=DIVIDE"
 set continue_sim 1
 
 while {$continue_sim} {
@@ -34,78 +34,144 @@ while {$continue_sim} {
     set valid_op 0
     while {!$valid_op} {
         if {[catch {
-            puts -nonewline "Select operation (0=ADD, 1=SUBTRACT): "
+            puts -nonewline "Select operation (0=ADD, 1=SUBTRACT, 3=DIVIDE): "
             flush stdout
             gets stdin op_choice
-            if {$op_choice == "0" || $op_choice == "1"} {
+            if {$op_choice == "0" || $op_choice == "1" || $op_choice == "3"} {
                 set valid_op 1
             } else {
-                puts "Invalid! Please enter 0 or 1"
+                puts "Invalid! Please enter 0, 1, or 3"
             }
         } err]} {
             puts "Error reading input"
         }
     }
 
-    set op_name [expr {$op_choice == 0 ? "ADD" : "SUBTRACT"}]
+    if {$op_choice == 0} {
+        set op_name "ADD"
+    } elseif {$op_choice == 1} {
+        set op_name "SUBTRACT"
+    } else {
+        set op_name "DIVIDE"
+    }
     puts "Operation: $op_name"
 
-    # Get first number (signed: -128 to 127)
-    set valid_input 0
-    while {!$valid_input} {
-        if {[catch {
-            puts -nonewline "Enter A (-128 to 127): "
-            flush stdout
-            gets stdin num_a
-            if {$num_a >= -128 && $num_a <= 127} {
-                set valid_input 1
-            } else {
-                puts "Invalid! Please enter a number between -128 and 127"
+    # For DIVIDE, only positive numbers (0-255)
+    if {$op_choice == 3} {
+        # Get dividend (unsigned: 0 to 255)
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter A - dividend (0 to 255): "
+                flush stdout
+                gets stdin num_a
+                if {$num_a >= 0 && $num_a <= 255} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between 0 and 255"
+                }
+            } err]} {
+                puts "Error reading input"
             }
-        } err]} {
-            puts "Error reading input"
         }
-    }
 
-    # Get second number (signed: -128 to 127)
-    set valid_input 0
-    while {!$valid_input} {
-        if {[catch {
-            puts -nonewline "Enter B (-128 to 127): "
-            flush stdout
-            gets stdin num_b
-            if {$num_b >= -128 && $num_b <= 127} {
-                set valid_input 1
-            } else {
-                puts "Invalid! Please enter a number between -128 and 127"
+        # Get divisor (unsigned: 1 to 255, no zero)
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter B - divisor (1 to 255): "
+                flush stdout
+                gets stdin num_b
+                if {$num_b >= 1 && $num_b <= 255} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between 1 and 255"
+                }
+            } err]} {
+                puts "Error reading input"
             }
-        } err]} {
-            puts "Error reading input"
         }
+
+        set unsigned_a $num_a
+        set unsigned_b $num_b
+
+        puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
+        set hex_a [format "%02X" $unsigned_a]
+        set hex_b [format "%02X" $unsigned_b]
+
+        force tb_alu/A 8'h$hex_a
+        force tb_alu/B 8'h$hex_b
+        force tb_alu/operation 3'b011
+
+        run 20ns
+
+        puts "\n========== Results =========="
+        set q_val [examine -radix unsigned tb_alu/quotient]
+        set r_val [examine -radix unsigned tb_alu/remainder]
+        puts "Quotient:  $q_val"
+        puts "Remainder: $r_val"
+        puts "=========================="
+
+    } else {
+        # ADD or SUBTRACT: signed numbers -128 to 127
+
+        # Get first number
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter A (-128 to 127): "
+                flush stdout
+                gets stdin num_a
+                if {$num_a >= -128 && $num_a <= 127} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between -128 and 127"
+                }
+            } err]} {
+                puts "Error reading input"
+            }
+        }
+
+        # Get second number
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter B (-128 to 127): "
+                flush stdout
+                gets stdin num_b
+                if {$num_b >= -128 && $num_b <= 127} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between -128 and 127"
+                }
+            } err]} {
+                puts "Error reading input"
+            }
+        }
+
+        # Convert signed to unsigned (two's complement)
+        set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
+        set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
+
+        puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
+        set hex_a [format "%02X" $unsigned_a]
+        set hex_b [format "%02X" $unsigned_b]
+
+        force tb_alu/A 8'h$hex_a
+        force tb_alu/B 8'h$hex_b
+        force tb_alu/operation 3'd$op_choice
+
+        run 20ns
+
+        puts "\n========== Results =========="
+        set result_val [examine -radix unsigned tb_alu/result]
+        set result_dec [expr {$result_val > 127 ? $result_val - 256 : $result_val}]
+        puts "Result: 0x[format %02X $result_val] (Decimal: $result_dec)"
+        puts "Z (Zero):     [examine -radix binary tb_alu/Z]"
+        puts "N (Negative): [examine -radix binary tb_alu/N]"
+        puts "V (Overflow): [examine -radix binary tb_alu/V]"
+        puts "=========================="
     }
-
-    # Convert signed to unsigned (two's complement)
-    set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
-    set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
-
-    # Force the values into the simulation (convert to hex format for ModelSim)
-    puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
-    set hex_a [format "%02X" $unsigned_a]
-    set hex_b [format "%02X" $unsigned_b]
-
-    force tb_alu/A 8'h$hex_a
-    force tb_alu/B 8'h$hex_b
-    force tb_alu/operation $op_choice
-
-    # Run simulation for a short time to see results
-    run 20ns
-
-    # Display results with flags
-    puts "\n========== Results =========="
-    puts "Z (Zero):    [examine -value tb_alu/Z]"
-    puts "N (Negative): [examine -value tb_alu/N]"
-    puts "V (Overflow): [examine -value tb_alu/V]"
-    puts "=========================="
 
     # Ask if user wants to continue
     set continue_sim 0
