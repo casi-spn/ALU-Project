@@ -2,7 +2,7 @@ module tb_alu;
 
 reg [7:0] A;
 reg [7:0] B;
-reg [2:0] operation;
+reg [3:0] operation;
 
 wire [7:0] result;
 wire [7:0] quotient;
