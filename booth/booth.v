@@ -5,7 +5,8 @@ module booth (
               input             rst_n,
               input  signed [7:0] inbus,
               output            done,
-              output [7:0]      outbus
+              output [7:0]      outbus,
+              output [15:0]     product   // {A_reg[7:0], Q_reg}, valid once done=1
               );
    // control word
    wire [8:0] c;
@@ -97,5 +98,6 @@ module booth (
    tristate_buffer_bus #(8) A_out (.data_in(A_reg[7:0]), .enable(c[6]), .data_out(output_buffer));
    tristate_buffer_bus #(8) Q_out (.data_in(Q_reg),      .enable(c[7]), .data_out(output_buffer));
 
-   assign outbus = output_buffer;
+   assign outbus  = output_buffer;
+   assign product = {A_reg[7:0], Q_reg};
 endmodule // booth

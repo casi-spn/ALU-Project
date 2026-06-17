@@ -10,17 +10,19 @@ if [file exists "work"] {vdel -all}
 vlib work
 
 # Compile files
-set sourcefiles {full_adder.v adder_8bit.v subtractor_8bit.v divider_8bit.v gate_and_8bit.v gate_or_8bit.v gate_xor_8bit.v left_shift_8bit.v right_shift_8bit.v alu.v tb_alu.v}
+set sourcefiles {adder/full_adder.v adder/adder_8bit.v subtractor/subtractor_8bit.v divider/divider_8bit.v shifters/left_shift_8bit.v shifters/right_shift_8bit.v common/dff.v gates/gates.v common/mux.v adder/adder.v shifters/lshift.v common/buffer.v common/register.v common/counter_nbits.v booth/cu_booth.v booth/booth.v booth/mult_unit.v alu/alu.v alu/alu_tb.v}
 if [catch "eval vlog $sourcefiles"] {
     puts "correct the compilation errors"
     return
 }
 
-# Start simulation
+# Start simulation (single clocked ALU; MULTIPLY runs through the
+# Booth multiplier via a start/done handshake, all other ops are
+# combinational and settle within one clock cycle)
 vsim -voptargs=+acc tb_alu
 
 # Add waves for visualization
-add wave *
+add wave -r /tb_alu/*
 
 # Robust result printer: handles X/Z (undefined) results without crashing
 proc show_result_flags {} {
@@ -36,9 +38,17 @@ proc show_result_flags {} {
     puts "V (Overflow): [examine -radix binary tb_alu/V]"
 }
 
+# Release the testbench's own stimulus process so `force` takes over,
+# then bring the ALU out of reset.
+force tb_alu/start 0
+force tb_alu/rst_n 0
+run 20ns
+force tb_alu/rst_n 1
+run 10ns
+
 # Interactive input loop
 puts "\n========== ALU Interactive Simulator =========="
-puts "Operations: 0=ADD, 1=SUBTRACT, 2=MULTIPLICATION, 3=DIVIDE, 4=AND, 5=OR, 6=XOR, 7=LEFT SHIFT, 8=RIGHT SHIFT"
+puts "Operations: 0=ADD, 1=SUBTRACT, 2=MULTIPLICATION, 3=DIVIDE"
 set continue_sim 1
 
 while {$continue_sim} {
@@ -48,13 +58,13 @@ while {$continue_sim} {
     set valid_op 0
     while {!$valid_op} {
         if {[catch {
-            puts -nonewline "Select operation (0=ADD, 1=SUBTRACT, 2=MULTIPLICATION, 3=DIVIDE, 4=AND, 5=OR, 6=XOR, 7=LEFT SHIFT, 8=RIGHT SHIFT): "
+            puts -nonewline "Select operation (0=ADD, 1=SUBTRACT, 2=MULTIPLICATION, 3=DIVIDE): "
             flush stdout
             gets stdin op_choice
-            if {$op_choice == "0" || $op_choice == "1" || $op_choice == "2" || $op_choice == "3" || $op_choice == "4" || $op_choice == "5" || $op_choice == "6" || $op_choice == "7" || $op_choice == "8"} {
+            if {$op_choice == "0" || $op_choice == "1" || $op_choice == "2" || $op_choice == "3"} {
                 set valid_op 1
             } else {
-                puts "Invalid! Please enter 0, 1, 2, 3, 4, 5, 6, 7 or 8"
+                puts "Invalid! Please enter 0, 1, 2 or 3"
             }
         } err]} {
             puts "Error reading input"
@@ -67,23 +77,87 @@ while {$continue_sim} {
         set op_name "SUBTRACT"
     } elseif {$op_choice == 2} {
         set op_name "MULTIPLICATION"
-    } elseif {$op_choice == 3} {
-        set op_name "DIVIDE"
-    } elseif {$op_choice == 4} {
-        set op_name "AND"
-    } elseif {$op_choice == 5} {
-        set op_name "OR"
-    } elseif {$op_choice == 6} {
-        set op_name "XOR"
-    } elseif {$op_choice == 7} {
-        set op_name "LEFT SHIFT"
     } else {
-        set op_name "RIGHT SHIFT"
+        set op_name "DIVIDE"
     }
     puts "Operation: $op_name"
 
-    # For DIVIDE, only positive numbers (0-255)
-    if {$op_choice == 3} {
+    if {$op_choice == 2} {
+        # MULTIPLICATION uses the radix-4 Booth multiplier (booth.v),
+        # driven through mult_unit's start/done handshake inside alu.v.
+
+        # Get multiplicand (signed: -128 to 127)
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter A - multiplicand (-128 to 127): "
+                flush stdout
+                gets stdin num_a
+                if {$num_a >= -128 && $num_a <= 127} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between -128 and 127"
+                }
+            } err]} {
+                puts "Error reading input"
+            }
+        }
+
+        # Get multiplier (signed: -128 to 127)
+        set valid_input 0
+        while {!$valid_input} {
+            if {[catch {
+                puts -nonewline "Enter B - multiplier (-128 to 127): "
+                flush stdout
+                gets stdin num_b
+                if {$num_b >= -128 && $num_b <= 127} {
+                    set valid_input 1
+                } else {
+                    puts "Invalid! Please enter a number between -128 and 127"
+                }
+            } err]} {
+                puts "Error reading input"
+            }
+        }
+
+        set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
+        set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
+
+        puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
+        set hex_a [format "%02X" $unsigned_a]
+        set hex_b [format "%02X" $unsigned_b]
+
+        force tb_alu/A 8'h$hex_a
+        force tb_alu/B 8'h$hex_b
+        force tb_alu/operation 4'd2
+        force tb_alu/start 1
+        run 10ns
+        force tb_alu/start 0
+
+        # The radix-4 Booth FSM always takes a fixed 21 clock cycles to
+        # finish an 8-bit multiply (LOAD_M, LOAD_Q, 4x SCAN/SHIFT1/SHIFT2/
+        # CHECK, OUTPUT_A, OUTPUT_Q, STOP), so jump straight there instead
+        # of polling one cycle at a time.
+        run 220ns
+
+        # Safety net in case timing ever changes
+        set safety 0
+        while {[examine -radix binary tb_alu/done] != "1" && $safety < 20} {
+            run 10ns
+            incr safety
+        }
+
+        puts "\n========== Results =========="
+        set lo_val [examine -radix unsigned tb_alu/result]
+        set hi_val [examine -radix unsigned tb_alu/remainder]
+        set prod_unsigned [expr {(($hi_val & 0xFF) << 8) | ($lo_val & 0xFF)}]
+        set prod_signed [expr {$prod_unsigned > 32767 ? $prod_unsigned - 65536 : $prod_unsigned}]
+        puts "Product: 0x[format %04X $prod_unsigned] (Decimal: $prod_signed)"
+        puts "=========================="
+
+    } elseif {$op_choice == 3} {
+        # For DIVIDE, only positive numbers (0-255)
+
         # Get dividend (unsigned: 0 to 255)
         set valid_input 0
         while {!$valid_input} {
@@ -138,116 +212,8 @@ while {$continue_sim} {
         puts "Remainder: $r_val"
         puts "=========================="
 
-    } elseif {$op_choice == 7 || $op_choice == 8} {
-        # LEFT & RIGHT SHIFT: A signed number 0 to 255, B signed number 0 to 7
-
-        # Get first number
-        set valid_input 0
-        while {!$valid_input} {
-            if {[catch {
-                puts -nonewline "Enter A (0 to 255): "
-                flush stdout
-                gets stdin num_a
-                if {$num_a >= 0 && $num_a <= 255} {
-                    set valid_input 1
-                } else {
-                    puts "Invalid! Please enter a number between 0 and 255"
-                }
-            } err]} {
-                puts "Error reading input"
-            }
-        }
-
-        # Get second number
-        set valid_input 0
-        while {!$valid_input} {
-            if {[catch {
-                puts -nonewline "Enter B (0 to 7): "
-                flush stdout
-                gets stdin num_b
-                if {$num_b >= 0 && $num_b <= 7} {
-                    set valid_input 1
-                } else {
-                    puts "Invalid! Please enter a number between 0 and 7"
-                }
-            } err]} {
-                puts "Error reading input"
-            }
-        }
-
-        # Convert signed to unsigned (two's complement)
-        set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
-        set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
-
-        puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
-        set hex_a [format "%02X" $unsigned_a]
-        set hex_b [format "%02X" $unsigned_b]
-
-        force tb_alu/A 8'h$hex_a
-        force tb_alu/B 8'h$hex_b
-        force tb_alu/operation 4'd$op_choice
-
-        run 20ns
-
-        puts "\n========== Results =========="
-        show_result_flags
-        puts "=========================="
-    } elseif {$op_choice == 4 || $op_choice == 5 || $op_choice == 6} {
-        # AND, OR, XOR: signed numbers 0 to 255
-
-        # Get first number
-        set valid_input 0
-        while {!$valid_input} {
-            if {[catch {
-                puts -nonewline "Enter A (0 to 255): "
-                flush stdout
-                gets stdin num_a
-                if {$num_a >= 0 && $num_a <= 255} {
-                    set valid_input 1
-                } else {
-                    puts "Invalid! Please enter a number between 0 and 255"
-                }
-            } err]} {
-                puts "Error reading input"
-            }
-        }
-
-        # Get second number
-        set valid_input 0
-        while {!$valid_input} {
-            if {[catch {
-                puts -nonewline "Enter B (0 to 255): "
-                flush stdout
-                gets stdin num_b
-                if {$num_b >= 0 && $num_b <= 255} {
-                    set valid_input 1
-                } else {
-                    puts "Invalid! Please enter a number between 0 and 255"
-                }
-            } err]} {
-                puts "Error reading input"
-            }
-        }
-
-        # Convert signed to unsigned (two's complement)
-        set unsigned_a [expr {$num_a < 0 ? $num_a + 256 : $num_a}]
-        set unsigned_b [expr {$num_b < 0 ? $num_b + 256 : $num_b}]
-
-        puts "\nApplying: A=$num_a, B=$num_b, Operation=$op_name"
-        set hex_a [format "%02X" $unsigned_a]
-        set hex_b [format "%02X" $unsigned_b]
-
-        force tb_alu/A 8'h$hex_a
-        force tb_alu/B 8'h$hex_b
-        force tb_alu/operation 4'd$op_choice
-
-        run 20ns
-
-        puts "\n========== Results =========="
-        show_result_flags
-        puts "=========================="
     } else {
-        # ADD, SUBTRACT, MULTIPLICATION: signed numbers -128 to 127
+        # ADD, SUBTRACT: signed numbers -128 to 127
 
         # Get first number
         set valid_input 0
