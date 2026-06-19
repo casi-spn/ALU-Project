@@ -1,16 +1,4 @@
 `timescale 1ns/1ps
-//--------------------------------------------------------------------------
-// Testbench for the radix-4 Booth multiplier (booth.v)   (Verilog-2001)
-//
-//  Icarus Verilog:
-//     iverilog -o sim src/dff.v src/gates.v src/mux.v src/adder.v \
-//              src/lshift.v src/buffer.v src/register.v src/counter_nbits.v \
-//              src/cu_booth.v src/booth.v tb/booth_tb.v
-//     vvp sim
-//
-//  One-shot design: rst_n is pulsed low before each multiply. The final
-//  product is read from {A_reg[7:0], Q_reg} once `done` is high.
-//--------------------------------------------------------------------------
 module booth_tb;
 
    reg               clk;

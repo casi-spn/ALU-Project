@@ -48,11 +48,18 @@ subtractor_8bit subtractor(
     .cout(sub_cout)
 );
 
-// Instantiate divider
+// Instantiate divider (structural SRT-2, multi-cycle via start/done handshake)
 wire [7:0] div_quotient, div_remainder;
-divider_8bit divider(
+wire       div_done, div_V;
+wire       div_start = start && (operation == 4'd3);
+div_unit divider(
+    .clk(clk),
+    .rst_n(rst_n),
+    .start(div_start),
     .A(A),
     .B(B),
+    .done(div_done),
+    .V(div_V),
     .quotient(div_quotient),
     .remainder(div_remainder)
 );
@@ -101,8 +108,9 @@ assign carry_out = (operation == 4'd0) ? add_cout :
                    (operation == 4'd1) ? sub_cout :
                    1'b0;
 
-// done: combinational ops settle immediately; MULTIPLY needs the Booth FSM
-assign done = (operation == 4'd2) ? mult_done : 1'b1;
+// done: combinational ops settle immediately; MULTIPLY and DIVIDE need their FSMs
+assign done = (operation == 4'd2) ? mult_done :
+              (operation == 4'd3) ? div_done  : 1'b1;
 
 // Status Flags
 assign Z = (result == 8'b0) ? 1'b1 : 1'b0;
